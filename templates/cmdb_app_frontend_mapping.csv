@@ -1,0 +1,14 @@
+mapping_key,app_cmdb_ci_key,app_short_name,frontend_entity_id,frontend_name,frontend_type,rum_expected,rum_enabled,rum_domains,mapping_method,mapping_confidence,user_event_count_24h,session_count_24h,last_seen_user_event,notes
+# Required fields: mapping_key (unique), app_cmdb_ci_key (must exist in cmdb_businessapp)
+# frontend_entity_id: Dynatrace entity ID (WEB_APPLICATION-xxx) or "none" if not yet mapped
+# frontend_type: web, mobile, desktop, or custom
+# rum_expected: 0 or 1
+# rum_enabled: 0 or 1
+# user_event_count_24h, session_count_24h: Decimal numbers (can be 0)
+# last_seen_user_event: ISO 8601 timestamp or "1970-01-01T00:00:00Z" if none
+# mapping_method: auto, manual, heuristic, or none
+# mapping_confidence: high, medium, low, or none
+# Example rows:
+app-jira-prod::jira-web,app-jira-prod,jira,WEB_APPLICATION-xxx,Jira Web,web,1,1,jira.example.com,auto,high,5432,123,2026-07-28T12:00:00Z,Mapped via domain match
+app-mail-prod::mail-web,app-mail-prod,mail,WEB_APPLICATION-yyy,Mail Portal,web,1,0,mail.example.com,manual,high,0,0,1970-01-01T00:00:00Z,Awaiting RUM enablement
+app-automation::none,app-automation,automation,none,none,web,0,0,none,none,none,0,0,1970-01-01T00:00:00Z,No frontend for backend automation

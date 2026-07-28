@@ -1,0 +1,11 @@
+cmdb_ci_key,name,short_name,owned_by,business_criticality,dv_business_unit,dv_operational_status,application_type,rum_expected,rum_domains
+# Required fields: cmdb_ci_key (unique), name
+# business_criticality values: Business Essential, Business Important, Business Moderate, Non-Business Essential
+# application_type values: backend, frontend, mobile, database, cache, message-queue
+# rum_expected: 0 (no RUM) or 1 (RUM enabled)
+# Example rows:
+app-jira-prod,Jira Production,jira,Platform Team,Business Essential,Engineering,Operational,backend,0,none
+app-mail-prod,Mail Service,mail,IT Operations,Business Essential,IT Infrastructure,Operational,backend,0,none
+app-automation,Automation Engine,automation,DevOps Team,Business Important,IT Infrastructure,Operational,backend,1,automation.example.com
+app-cmdb,CMDB Repository,cmdb,Database Team,Business Essential,Data Management,Operational,database,0,none
+app-dns,DNS Service,dns,Network Team,Business Essential,IT Infrastructure,Operational,backend,0,none

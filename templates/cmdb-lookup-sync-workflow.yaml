@@ -1,0 +1,273 @@
+# CMDB Lookup Sync Workflow Template
+# 
+# This workflow syncs CMDB data into Dynatrace lookup tables.
+# Deployed from Application Observability Hub during setup.
+#
+# Usage:
+# 1. Replace placeholders: {{CMDB_URL}}, {{CMDB_USERNAME}}, {{CMDB_PASSWORD}}
+# 2. Deploy via dtctl: dtctl apply -f cmdb-lookup-sync-workflow.yaml
+# 3. Schedule to run hourly for automatic data sync
+
+id: application-observability-hub-cmdb-sync
+title: Application Observability Hub - CMDB Lookup Sync
+description: Syncs CMDB data (Business Apps, Servers, Frontend Mappings) into Dynatrace lookup tables for observability correlation.
+private: false
+isdeployed: true
+
+tasks:
+  sync_cmdb_data:
+    name: sync_cmdb_data
+    action: dynatrace.automations:run-javascript
+    input:
+      script: |
+        export default async function () {
+          const cmdbUrl = "{{CMDB_URL}}";
+          const cmdbUsername = "{{CMDB_USERNAME}}";
+          const cmdbPassword = "{{CMDB_PASSWORD}}";
+
+          async function fetchFromCmdb(endpoint) {
+            const auth = btoa(`${cmdbUsername}:${cmdbPassword}`);
+            const response = await fetch(`${cmdbUrl}${endpoint}`, {
+              method: "GET",
+              headers: {
+                "Authorization": `Basic ${auth}`,
+                "Accept": "application/json"
+              }
+            });
+
+            if (!response.ok) {
+              throw new Error(`CMDB fetch failed: ${response.status} ${response.statusText}`);
+            }
+
+            return response.json();
+          }
+
+          function asString(value, fallback = "") {
+            if (value === null || value === undefined) {
+              return fallback;
+            }
+            return String(value).trim();
+          }
+
+          function dedupeBy(records, keyName) {
+            const seen = new Set();
+            const output = [];
+            for (const record of records) {
+              const key = asString(record[keyName]);
+              if (!key || seen.has(key)) {
+                continue;
+              }
+              seen.add(key);
+              output.push(record);
+            }
+            return output;
+          }
+
+          function csvCell(value) {
+            const text = asString(value);
+            return text.replace(/[\r\n,]/g, " ");
+          }
+
+          function toCsv(records, headers) {
+            const lines = [headers.join(",")];
+            for (const record of records) {
+              lines.push(headers.map((header) => csvCell(record[header])).join(","));
+            }
+            return `${lines.join("\n")}\n`;
+          }
+
+          async function uploadLookup(args) {
+            const request = {
+              filePath: args.filePath,
+              lookupField: args.lookupField,
+              overwrite: true,
+              displayName: args.displayName,
+              description: args.description,
+              skippedRecords: 1,
+              autoFlatten: true,
+              timezone: "UTC",
+              locale: "en_US"
+            };
+
+            if (args.parsePattern) {
+              request.parsePattern = args.parsePattern;
+            }
+
+            const blob = new Blob([args.content], { type: args.contentType });
+            const file = new File([blob], args.fileName, { type: args.contentType });
+            const formData = new FormData();
+            formData.append("request", JSON.stringify(request));
+            formData.append("content", file);
+
+            const response = await fetch("/platform/storage/resource-store/v1/files/tabular/lookup:upload", {
+              method: "POST",
+              body: formData
+            });
+
+            if (!response.ok) {
+              const body = await response.text();
+              throw new Error(`Lookup upload failed for ${args.filePath}: ${response.status} ${response.statusText} ${body}`);
+            }
+
+            return {
+              filePath: args.filePath,
+              statusCode: response.status
+            };
+          }
+
+          const result = {
+            startedAt: new Date().toISOString(),
+            businessapp: { ok: false, recordsUploaded: 0, error: null },
+            server: { ok: false, recordsUploaded: 0, error: null },
+            frontend_mapping: { ok: false, recordsUploaded: 0, error: null }
+          };
+
+          try {
+            // Fetch Business Applications
+            const appData = await fetchFromCmdb("/api/cmdb/businessapp");
+            const apps = Array.isArray(appData) ? appData : (appData.records || []);
+            
+            const normalizedApps = apps.map((app) => ({
+              cmdb_ci_key: asString(app.cmdb_ci_key || app.sys_id),
+              name: asString(app.name),
+              short_name: asString(app.u_short_name || app.short_name),
+              owned_by: asString(app.owned_by),
+              business_criticality: asString(app.business_criticality),
+              dv_business_unit: asString(app.u_business_unit || app.dv_business_unit),
+              dv_operational_status: asString(app.operational_status || app.dv_operational_status),
+              application_type: asString(app.application_type || "backend"),
+              rum_expected: asString(app.rum_expected || "0"),
+              rum_domains: asString(app.rum_domains || "")
+            })).filter((a) => a.cmdb_ci_key !== "");
+
+            const dedupedApps = dedupeBy(normalizedApps, "cmdb_ci_key");
+            const appsCsv = toCsv(dedupedApps, [
+              "cmdb_ci_key", "name", "short_name", "owned_by", "business_criticality",
+              "dv_business_unit", "dv_operational_status", "application_type", "rum_expected", "rum_domains"
+            ]);
+
+            await uploadLookup({
+              filePath: "/lookups/cmdb_businessapp",
+              parsePattern: "LD:cmdb_ci_key ',' LD:name ',' LD:short_name ',' LD:owned_by ',' LD:business_criticality ',' LD:dv_business_unit ',' LD:dv_operational_status ',' LD:application_type ',' LD:rum_expected ',' LD:rum_domains",
+              lookupField: "cmdb_ci_key",
+              displayName: "CMDB Business Applications",
+              description: "Synced from CMDB via Application Observability Hub",
+              fileName: "cmdb_businessapp.csv",
+              contentType: "text/csv",
+              content: appsCsv
+            });
+
+            result.businessapp.ok = true;
+            result.businessapp.recordsUploaded = dedupedApps.length;
+          } catch (error) {
+            result.businessapp.error = String(error);
+          }
+
+          try {
+            // Fetch Servers
+            const srvData = await fetchFromCmdb("/api/cmdb/server");
+            const servers = Array.isArray(srvData) ? srvData : (srvData.records || []);
+
+            const normalizedServers = servers.map((srv) => ({
+              cmdb_ci_key: asString(srv.cmdb_ci_key || srv.sys_id),
+              name: asString(srv.name),
+              fully_qualified_domain_name: asString(srv.fully_qualified_domain_name || srv.name),
+              busapp_cmdb_ci_key: asString(srv.busapp_cmdb_ci_key || srv.u_business_app),
+              location: asString(srv.location)
+            })).filter((s) => s.cmdb_ci_key !== "");
+
+            const dedupedServers = dedupeBy(normalizedServers, "cmdb_ci_key");
+            const serversCsv = toCsv(dedupedServers, [
+              "cmdb_ci_key", "name", "fully_qualified_domain_name", "busapp_cmdb_ci_key", "location"
+            ]);
+
+            await uploadLookup({
+              filePath: "/lookups/cmdb_server",
+              parsePattern: "LD:cmdb_ci_key ',' LD:name ',' LD:fully_qualified_domain_name ',' LD:busapp_cmdb_ci_key ',' LD:location",
+              lookupField: "cmdb_ci_key",
+              displayName: "CMDB Servers",
+              description: "Synced from CMDB via Application Observability Hub",
+              fileName: "cmdb_server.csv",
+              contentType: "text/csv",
+              content: serversCsv
+            });
+
+            result.server.ok = true;
+            result.server.recordsUploaded = dedupedServers.length;
+          } catch (error) {
+            result.server.error = String(error);
+          }
+
+          try {
+            // Fetch Frontend Mappings (optional)
+            const fmData = await fetchFromCmdb("/api/cmdb/app_frontend_mapping");
+            const mappings = Array.isArray(fmData) ? fmData : (fmData.records || []);
+
+            const normalizedMappings = mappings.map((m) => ({
+              mapping_key: asString(m.mapping_key || m.sys_id),
+              app_cmdb_ci_key: asString(m.app_cmdb_ci_key),
+              app_short_name: asString(m.app_short_name),
+              frontend_entity_id: asString(m.frontend_entity_id || "none"),
+              frontend_name: asString(m.frontend_name || "none"),
+              frontend_type: asString(m.frontend_type || "web"),
+              rum_expected: asString(m.rum_expected || "0"),
+              rum_enabled: asString(m.rum_enabled || "0"),
+              rum_domains: asString(m.rum_domains || "none"),
+              mapping_method: asString(m.mapping_method || "none"),
+              mapping_confidence: asString(m.mapping_confidence || "none"),
+              user_event_count_24h: asString(m.user_event_count_24h || "0"),
+              session_count_24h: asString(m.session_count_24h || "0"),
+              last_seen_user_event: asString(m.last_seen_user_event || "1970-01-01T00:00:00Z"),
+              notes: asString(m.notes || "")
+            })).filter((m) => m.mapping_key !== "" && m.app_cmdb_ci_key !== "");
+
+            const dedupedMappings = dedupeBy(normalizedMappings, "mapping_key");
+            const mappingsCsv = toCsv(dedupedMappings, [
+              "mapping_key", "app_cmdb_ci_key", "app_short_name", "frontend_entity_id", "frontend_name",
+              "frontend_type", "rum_expected", "rum_enabled", "rum_domains", "mapping_method",
+              "mapping_confidence", "user_event_count_24h", "session_count_24h", "last_seen_user_event", "notes"
+            ]);
+
+            await uploadLookup({
+              filePath: "/lookups/cmdb_app_frontend_mapping",
+              parsePattern: "LD:mapping_key ',' LD:app_cmdb_ci_key ',' LD:app_short_name ',' LD:frontend_entity_id ',' LD:frontend_name ',' LD:frontend_type ',' LD:rum_expected ',' LD:rum_enabled ',' LD:rum_domains ',' LD:mapping_method ',' LD:mapping_confidence ',' LD:user_event_count_24h ',' LD:session_count_24h ',' LD:last_seen_user_event ',' LD:notes",
+              lookupField: "mapping_key",
+              displayName: "CMDB App Frontend Mapping",
+              description: "Synced from CMDB via Application Observability Hub",
+              fileName: "cmdb_app_frontend_mapping.csv",
+              contentType: "text/csv",
+              content: mappingsCsv
+            });
+
+            result.frontend_mapping.ok = true;
+            result.frontend_mapping.recordsUploaded = dedupedMappings.length;
+          } catch (error) {
+            result.frontend_mapping.error = String(error);
+          }
+
+          result.finishedAt = new Date().toISOString();
+          result.allSuccess = result.businessapp.ok && result.server.ok;
+
+          if (!result.allSuccess) {
+            throw new Error(`Sync partially failed: ${JSON.stringify(result)}`);
+          }
+
+          return result;
+        }
+    position:
+      x: 0
+      y: 1
+    predecessors: []
+
+  report_result:
+    name: report_result
+    action: dynatrace.automations:send-slack-message
+    input:
+      channel: "#observability"
+      message: "✓ CMDB Lookup Sync completed: {{result.startedAt}}"
+    position:
+      x: 0
+      y: 2
+    predecessors:
+      - sync_cmdb_data
+    skipOnError: true

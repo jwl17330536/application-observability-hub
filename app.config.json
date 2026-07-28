@@ -1,0 +1,30 @@
+{
+  "app": {
+    "id": "application.observability.hub",
+    "name": "Application Observability Hub",
+    "version": "0.1.0",
+    "description": "Multi-tenant hub app for application observability with flexible data sources",
+    "scopes": [
+      {
+        "name": "app_management:apps:read",
+        "comment": "Read app management data"
+      },
+      {
+        "name": "tenant:read",
+        "comment": "Read tenant information"
+      },
+      {
+        "name": "storage:files:read",
+        "comment": "Read configuration from Document Store"
+      },
+      {
+        "name": "storage:files:write",
+        "comment": "Write configuration to Document Store"
+      }
+    ]
+  },
+  "environmentUrl": "https://oei3894h.sprint.apps.dynatracelabs.com",
+  "build": {
+    "sourceRoot": "ui"
+  }
+}

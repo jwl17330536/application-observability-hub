@@ -1,0 +1,12 @@
+cmdb_ci_key,name,fully_qualified_domain_name,busapp_cmdb_ci_key,location
+# Required fields: cmdb_ci_key (unique), name, busapp_cmdb_ci_key (must exist in cmdb_businessapp)
+# busapp_cmdb_ci_key: Foreign key to cmdb_businessapp.cmdb_ci_key
+# fully_qualified_domain_name: Used for matching to Dynatrace dt.entity.host names
+# location: Physical or logical location (datacenter, cloud region, etc.)
+# Example rows:
+srv-jira-01,jira-01.prod.local,jira-01.prod.local,app-jira-prod,US-East-1
+srv-jira-02,jira-02.prod.local,jira-02.prod.local,app-jira-prod,US-East-1
+srv-mail-01,mail-01.infra.local,mail-01.infra.local,app-mail-prod,US-Central-1
+srv-automation-01,automation-01.home.local,automation-01.home.local,app-automation,US-West-1
+srv-cmdb-01,cmdb-01.data.local,cmdb-01.data.local,app-cmdb,US-Central-1
+srv-dns-01,dns-01.infra.local,dns-01.infra.local,app-dns,US-East-1
