@@ -1,15 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchConfigFromDocumentStore } from "@utils/documentStore";
-
-export interface MappingConfig {
-  dataSourceType: "tags" | "lookup" | "dql";
-  fieldMappings: {
-    appTag: string;
-    appName: string;
-    tier: string;
-    owner: string;
-  };
-}
+import { fetchConfigFromDocumentStore, MappingConfig } from "@utils/documentStore";
 
 /**
  * useMappingConfig Hook - Fetch/cache mapping configuration

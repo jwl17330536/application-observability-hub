@@ -1,10 +1,18 @@
-import { MappingConfig } from "@hooks/useMappingConfig";
-
 /**
  * Document Store API helper
  * Reads/writes configuration to Dynatrace Document Store
  * Falls back to localStorage if unavailable
  */
+
+export interface MappingConfig {
+  dataSourceType: "tags" | "lookup" | "dql";
+  fieldMappings: {
+    appTag: string;
+    appName: string;
+    tier: string;
+    owner: string;
+  };
+}
 
 const DOCUMENT_STORE_KEY = "observability-hub-app-config-v1";
 const USE_LOCAL_STORAGE = !sessionStorage.getItem("DOCUMENT_STORE_AVAILABLE");

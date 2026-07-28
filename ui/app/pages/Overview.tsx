@@ -38,7 +38,7 @@ export const Overview: React.FC = () => {
     `;
   }, [config]);
 
-  const { result, isLoading: queryLoading, error: queryError } = useDql({ query: query || "" });
+  const { data, isLoading: queryLoading, error: queryError } = useDql({ query: query || "" });
 
   const isLoading = configLoading || queryLoading;
   const error = configError || queryError;
@@ -89,7 +89,7 @@ export const Overview: React.FC = () => {
     );
   }
 
-  const applicationData: AppRow[] = (result?.records || []) as AppRow[];
+  const applicationData: AppRow[] = (data?.records || []) as AppRow[];
   const { appTag, appName, tier, owner } = config.fieldMappings;
 
   return (

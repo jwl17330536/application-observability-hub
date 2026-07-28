@@ -1,4 +1,4 @@
-import { MappingConfig } from "@hooks/useMappingConfig";
+import { MappingConfig } from "@utils/documentStore";
 import { tagsAdapter } from "./adapters/tagsAdapter";
 import { lookupAdapter } from "./adapters/lookupAdapter";
 import { dqlAdapter } from "./adapters/dqlAdapter";
