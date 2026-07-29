@@ -12,6 +12,7 @@ export interface MappingConfig {
     tier: string;
     owner: string;
   };
+  lookupTableName?: string; // For dataSourceType: "lookup" (Phase 2)
 }
 
 const DOCUMENT_STORE_KEY = "observability-hub-app-config-v1";

@@ -18,7 +18,10 @@ export function buildQueriesForDataSource(config: MappingConfig): QuerySet {
     case "tags":
       return tagsAdapter.buildQueries(config.fieldMappings);
     case "lookup":
-      return lookupAdapter.buildQueries(config.fieldMappings);
+      return lookupAdapter.buildQueries(
+        config.fieldMappings,
+        config.lookupTableName || "applications"
+      );
     case "dql":
       return dqlAdapter.buildQueries(config.fieldMappings);
     default:

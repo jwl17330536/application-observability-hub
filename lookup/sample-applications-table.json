@@ -1,0 +1,55 @@
+{
+  "description": "Sample lookup table data for Phase 1.5 validation",
+  "tableName": "applications",
+  "columns": ["app_id", "app_name", "tier", "owner"],
+  "data": [
+    {
+      "app_id": "jira-prod",
+      "app_name": "Jira",
+      "tier": "Business Critical",
+      "owner": "Platform Team"
+    },
+    {
+      "app_id": "confluence-prod",
+      "app_name": "Confluence",
+      "tier": "Business Critical",
+      "owner": "Platform Team"
+    },
+    {
+      "app_id": "mail-prod",
+      "app_name": "Mail",
+      "tier": "Business Essential",
+      "owner": "Ops Team"
+    },
+    {
+      "app_id": "wiki-internal",
+      "app_name": "Internal Wiki",
+      "tier": "Business Essential",
+      "owner": "Docs Team"
+    },
+    {
+      "app_id": "monitoring-core",
+      "app_name": "Core Monitoring",
+      "tier": "Critical Infrastructure",
+      "owner": "SRE Team"
+    },
+    {
+      "app_id": "logging-prod",
+      "app_name": "Log Aggregation",
+      "tier": "Critical Infrastructure",
+      "owner": "SRE Team"
+    },
+    {
+      "app_id": "analytics-prod",
+      "app_name": "Analytics Platform",
+      "tier": "Business Standard",
+      "owner": "Analytics Team"
+    },
+    {
+      "app_id": "dev-ci-cd",
+      "app_name": "CI/CD Pipeline",
+      "tier": "Development Support",
+      "owner": "DevTools Team"
+    }
+  ]
+}

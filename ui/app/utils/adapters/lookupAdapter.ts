@@ -1,19 +1,29 @@
 /**
- * Lookup Adapter - Converts field mappings to lookup-based DQL queries
- * Uses CMDB lookup tables synced via observability-health-cmdb-lookup-sync-workflow-v2.yaml
+ * Lookup Adapter - Phase 1.5 & Phase 2
  * 
- * Lookup tables (deployed by dynatrace-cmdb-app):
- * - /lookups/cmdb_businessapp (key: cmdb_ci_key)
- * - /lookups/cmdb_server (key: cmdb_ci_key, join via busapp_cmdb_ci_key)
- * - /lookups/cmdb_app_frontend_mapping (key: mapping_key, join via app_cmdb_ci_key)
+ * Converts field mappings to lookup-table-based DQL queries.
+ * Works with generic lookup tables (e.g., "applications" table with user-defined columns).
  * 
- * Synced hourly from CMDB simulator (cmdb.lindleyhome.com:8088)
+ * Example lookup table structure:
+ *   app_id (key), app_name, tier, owner
+ * 
+ * User defines mappings in Setup wizard:
+ *   - appTag field → maps to lookup table column name (e.g., "app_id")
+ *   - appName field → maps to lookup table column name (e.g., "app_name")
+ *   - tier field → maps to lookup table column name (e.g., "tier")
+ *   - owner field → maps to lookup table column name (e.g., "owner")
+ * 
+ * Phase 2: Replace tagsAdapter with lookupAdapter by changing config.dataSourceType in Setup.tsx
+ * KEY INSIGHT: Visualization code needs ZERO changes (same table rendering for both adapters)
  */
 
-import { QuerySet } from "../queryBuilder";
-import { substitutePlaceholders } from "../queryPlaceholders";
+export interface QuerySet {
+  overview: string;
+  traceCandidates: string;
+  healthReport: string;
+}
 
-interface FieldMappings {
+export interface FieldMappings {
   appTag: string;
   appName: string;
   tier: string;
@@ -21,118 +31,91 @@ interface FieldMappings {
 }
 
 /**
- * Overview query: Application Inventory with Dynatrace coverage.
- * Pattern from Observability Health Dashboard v9 Tile 4.
+ * Overview query: Fetch all rows from lookup table, project user-defined columns
+ * 
+ * Example: If user maps:
+ *   appTag → "app_id"
+ *   appName → "app_name"
+ *   tier → "tier"
+ *   owner → "owner"
+ * 
+ * This generates:
+ *   fetch data from table "applications"
+ *   | fields 
+ *       appTag = this["app_id"],
+ *       appName = this["app_name"],
+ *       tier = this["tier"],
+ *       owner = this["owner"]
+ *   | sort by appTag
  */
-const LOOKUP_OVERVIEW_TEMPLATE = `
-load "/lookups/cmdb_businessapp"
-| fields
-    app_key = cmdb_ci_key,
-    \`Application\` = name,
-    AppShortName = short_name,
-    owner = owned_by,
-    tier = business_criticality,
-    \`Business Unit\` = dv_business_unit,
-    Status = dv_operational_status
-| lookup [
-    load "/lookups/cmdb_server"
-    | fields app_key = busapp_cmdb_ci_key, server_name = lower(name), server_location = location
-    | lookup [
-        fetch dt.entity.host
-        | fields id, entity.name, monitoringMode, paasVendorType, isMonitoringCandidate
-        | fieldsAdd monitoringMode = if(isNotNull(paasVendorType), then:"APP_ONLY", else:if(isMonitoringCandidate == true, then:"CANDIDATE", else:monitoringMode))
-        | parse entity.name, """LD:hostname ('.' LD:domain)? EOS"""
-        | fieldsAdd server_name = lower(hostname)
-        | fields server_name, monitoringMode
-      ], sourceField:server_name, lookupField:server_name, fields:{monitoringMode}
-  ], sourceField:app_key, lookupField:app_key, fields:{server_name, server_location, monitoringMode}
-| fieldsAdd monitoringMode = coalesce(monitoringMode, "Not Monitored")
-| summarize
-    cmdb_count = countDistinct(server_name),
-    dt_count = sum(if(isNotNull(monitoringMode) AND monitoringMode != "Not Monitored", then:1, else:0)),
-    by:{app_key, \`Application\`, AppShortName, owner, tier, Status, \`Business Unit\`}
-| fieldsAdd
-    dt_count = coalesce(dt_count, 0),
-    cmdb_count = coalesce(cmdb_count, 0),
-    \`Gap\` = cmdb_count - dt_count,
-    \`Coverage %\` = if(cmdb_count == 0, then:0, else:round(100.0 * dt_count / cmdb_count))
-| fieldsAdd
-    \`Traces %\` = 0,
-    \`Metrics %\` = 0,
-    \`Logs %\` = 0,
-    \`Signal Health\` = if(\`Coverage %\` == 100, then:"🟢", else:if(\`Coverage %\` >= 50, then:"🟡", else:"🔴"))
-| sort \`Gap\` desc, \`Application\` asc
-| fields \`Application\`, tier, owner, Status, \`CMDB Servers\` = cmdb_count, \`Monitored\` = dt_count, \`Gap\`, \`Coverage %\`, \`Traces %\`, \`Metrics %\`, \`Logs %\`, \`Signal Health\`
-`;
+const buildOverviewQuery = (
+  fieldMappings: FieldMappings,
+  tableName: string
+): string => {
+  return `fetch data from table "${tableName}"
+| fields 
+    appTag = this["${fieldMappings.appTag}"],
+    appName = this["${fieldMappings.appName}"],
+    tier = this["${fieldMappings.tier}"],
+    owner = this["${fieldMappings.owner}"]
+| sort by appTag`;
+};
 
 /**
- * Trace candidates query: Hosts in CMDB with Dynatrace monitoring readiness.
- * Pattern from Observability Health Dashboard v9 Tile 7.
+ * Trace Candidates query (Phase 2+)
+ * 
+ * For now: returns empty (Phase 1.5 doesn't require multi-query)
+ * Phase 2: Implement correlation between lookup table and DT infrastructure
  */
-const LOOKUP_TRACE_CANDIDATES_TEMPLATE = `
-load "/lookups/cmdb_businessapp"
-| fields app_key = cmdb_ci_key, \`Application\` = name
-| lookup [
-    load "/lookups/cmdb_server"
-    | fields app_key = busapp_cmdb_ci_key, server_name = lower(name)
-    | lookup [
-        fetch dt.entity.host
-        | fields id, entity.name, monitoringMode, paasVendorType, isMonitoringCandidate
-        | fieldsAdd monitoringMode = if(isNotNull(paasVendorType), then:"APP_ONLY", else:if(isMonitoringCandidate == true, then:"CANDIDATE", else:monitoringMode))
-        | parse entity.name, """LD:hostname ('.' LD:domain)? EOS"""
-        | fieldsAdd server_name = lower(hostname)
-      ], sourceField:server_name, lookupField:server_name, fields:{monitoringMode}
-  ], sourceField:app_key, lookupField:app_key, fields:{server_name, monitoringMode}
-| fieldsAdd monitoringMode = coalesce(monitoringMode, "Not Monitored")
-| filter monitoringMode != "Not Monitored"
-| fields \`Application\`, \`Server\` = server_name, \`Monitoring Mode\` = monitoringMode
-| sort \`Server\` asc
-`;
+const buildTraceCandidatesQuery = (
+  fieldMappings: FieldMappings,
+  tableName: string
+): string => {
+  // Phase 2: Will implement lookup-to-host correlation
+  return `fetch dt.entity.host
+| limit 0`;
+};
 
 /**
- * Health report query: CMDB vs Dynatrace coverage by tier.
- * Aggregated view for KPI dashboard.
+ * Health Report query (Phase 2+)
+ * 
+ * For now: returns empty (Phase 1.5 doesn't require multi-query)
+ * Phase 2: Implement coverage analysis (lookup records with/without DT entities)
  */
-const LOOKUP_HEALTH_REPORT_TEMPLATE = `
-load "/lookups/cmdb_businessapp"
-| fields app_key = cmdb_ci_key, \`Application\` = name, tier = business_criticality
-| summarize
-    cmdb_total = countDistinct(\`Application\`),
-    by:{tier}
-| lookup [
-    load "/lookups/cmdb_businessapp"
-    | fields app_key = cmdb_ci_key, tier = business_criticality
-    | lookup [
-        load "/lookups/cmdb_server"
-        | fields app_key = busapp_cmdb_ci_key, server_name = lower(name)
-        | lookup [
-            fetch dt.entity.host
-            | fields id, entity.name, monitoringMode, paasVendorType, isMonitoringCandidate
-            | fieldsAdd monitoringMode = if(isNotNull(paasVendorType), then:"APP_ONLY", else:if(isMonitoringCandidate == true, then:"CANDIDATE", else:monitoringMode))
-            | parse entity.name, """LD:hostname ('.' LD:domain)? EOS"""
-            | fieldsAdd server_name = lower(hostname)
-            | fields server_name, monitoringMode
-          ], sourceField:server_name, lookupField:server_name, fields:{monitoringMode}
-      ], sourceField:app_key, lookupField:app_key, fields:{server_name, monitoringMode}
-    | fieldsAdd monitoringMode = coalesce(monitoringMode, "Not Monitored")
-    | filter monitoringMode != "Not Monitored"
-    | summarize dt_count = countDistinct(\`Application\`), by:{tier}
-  ], sourceField:tier, lookupField:tier, fields:{dt_count}
-| fieldsAdd dt_count = coalesce(dt_count, 0)
-| fieldsAdd coverage_pct = if(cmdb_total == 0, then:0, else:round(100.0 * dt_count / cmdb_total))
-| fields tier, \`CMDB Total\` = cmdb_total, \`Monitored in DT\` = dt_count, \`Coverage %\` = coverage_pct
-| sort tier asc
-`;
+const buildHealthReportQuery = (
+  fieldMappings: FieldMappings,
+  tableName: string
+): string => {
+  // Phase 2: Will implement lookup coverage analysis
+  return `fetch data from table "${tableName}"
+| limit 0`;
+};
 
+/**
+ * Export the lookupAdapter with identical interface to tagsAdapter
+ * 
+ * Usage in Overview.tsx:
+ *   const adapter = config.dataSourceType === "lookup" ? lookupAdapter : tagsAdapter;
+ *   const query = adapter.buildQueries(config.fieldMappings, config.lookupTableName).overview;
+ * 
+ * KEY INSIGHT: Table rendering code never changes between adapters.
+ * This proves Phase 1 → Phase 2 pivot requires ZERO visualization code changes.
+ */
 export const lookupAdapter = {
-  buildQueries(mappings: FieldMappings): QuerySet {
-    // Note: Field mappings are for flexibility; lookup adapter uses fixed CMDB field names
-    // Placeholders are substituted but queries use canonical CMDB schema
-    const mappingsRecord = mappings as unknown as Record<string, string>;
+  /**
+   * Build all three queries (overview, traceCandidates, healthReport)
+   * @param fieldMappings User-defined column name mappings
+   * @param tableName Name of the lookup table to query (default: "applications")
+   * @returns QuerySet with overview, traceCandidates, and healthReport queries
+   */
+  buildQueries(
+    fieldMappings: FieldMappings,
+    tableName: string = "applications"
+  ): QuerySet {
     return {
-      overview: substitutePlaceholders(LOOKUP_OVERVIEW_TEMPLATE, mappingsRecord),
-      traceCandidates: substitutePlaceholders(LOOKUP_TRACE_CANDIDATES_TEMPLATE, mappingsRecord),
-      healthReport: substitutePlaceholders(LOOKUP_HEALTH_REPORT_TEMPLATE, mappingsRecord),
-    };
+      overview: buildOverviewQuery(fieldMappings, tableName),
+      traceCandidates: buildTraceCandidatesQuery(fieldMappings, tableName),
+      healthReport: buildHealthReportQuery(fieldMappings, tableName),
+    } as QuerySet;
   },
 };
