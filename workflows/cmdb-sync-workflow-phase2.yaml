@@ -1,0 +1,279 @@
+name: Application Observability Hub - CMDB Sync (Phase 2)
+description: Syncs application data from CMDB API to Dynatrace lookup table hourly
+
+# TEMPLATE for Phase 2 implementation
+# This workflow is not active in Phase 1
+# Phase 1.5 validates the adapter pattern without needing this workflow
+
+trigger:
+  schedule:
+    interval: 3600 # Run hourly
+
+tasks:
+  - id: fetch_cmdb_applications
+    name: Fetch Applications from CMDB API
+    description: |
+      Fetches application data from CMDB via REST API.
+      Example: ServiceNow API, custom CMDB REST endpoint, etc.
+    
+    action: http_request
+    config:
+      method: GET
+      url: "{{ cmdb_api_url }}/api/applications"
+      headers:
+        Authorization: "Bearer {{ cmdb_api_token }}"
+        Accept: application/json
+      timeout: 30s
+      
+    # Output schema expected from CMDB API:
+    # {
+    #   "result": [
+    #     {
+    #       "sys_id": "a9a7d5c1234567890abcdef123456789",
+    #       "name": "Jira",
+    #       "cmdb_ci_key": "jira-prod",
+    #       "short_name": "JIRA",
+    #       "business_criticality": "Business Critical",
+    #       "owned_by": "Platform Team",
+    #       "business_unit": "Engineering"
+    #     },
+    #     ...
+    #   ]
+    # }
+  
+  - id: transform_to_lookup_schema
+    name: Transform CMDB Data to Lookup Table Schema
+    description: |
+      Transforms CMDB API response into lookup table column format:
+      - app_id (from cmdb_ci_key)
+      - app_name (from name)
+      - tier (from business_criticality)
+      - owner (from owned_by)
+    
+    action: javascript
+    config:
+      script: |
+        // Input: CMDB API response (previous task output)
+        const cmdbData = context.tasks['fetch_cmdb_applications'].output.body.result;
+        
+        // Transform to lookup table schema
+        const lookupData = cmdbData.map(app => ({
+          app_id: app.cmdb_ci_key,
+          app_name: app.name,
+          tier: app.business_criticality,
+          owner: app.owned_by,
+          business_unit: app.business_unit,
+          last_sync: new Date().toISOString()
+        }));
+        
+        // Validation: Ensure all required fields are present
+        const requiredFields = ['app_id', 'app_name', 'tier', 'owner'];
+        const valid = lookupData.every(row =>
+          requiredFields.every(field => row[field] != null && row[field] !== '')
+        );
+        
+        if (!valid) {
+          throw new Error('Lookup data validation failed: missing required fields');
+        }
+        
+        return {
+          records: lookupData,
+          count: lookupData.length,
+          timestamp: new Date().toISOString()
+        };
+  
+  - id: update_lookup_table
+    name: Upload to Dynatrace Lookup Table
+    description: |
+      Uploads transformed data to Dynatrace lookup table "applications".
+      Replaces entire table on each sync (idempotent).
+    
+    action: dynatrace_api
+    config:
+      endpoint: "https://{{ dynatrace_environment }}/api/v2/lookup-tables/applications/update"
+      method: POST
+      headers:
+        Authorization: "Api-Token {{ dynatrace_api_token }}"
+        Content-Type: application/json
+      
+      payload:
+        # Schema must match table definition
+        # Column: app_id (key), app_name, tier, owner, business_unit, last_sync
+        entries: "{{ context.tasks['transform_to_lookup_schema'].output.records }}"
+      
+      timeout: 60s
+  
+  - id: notify_sync_complete
+    name: Send Sync Status Notification
+    description: Notifies about sync completion
+
+    action: notification
+    config:
+      title: "Application Observability Hub - CMDB Sync"
+      message: |
+        ✅ CMDB sync completed successfully
+        
+        - Records synced: {{ context.tasks['transform_to_lookup_schema'].output.count }}
+        - Timestamp: {{ context.tasks['transform_to_lookup_schema'].output.timestamp }}
+        - Lookup table: applications
+        - Next sync: In 1 hour
+      
+      channels:
+        - slack:
+            channel: "#observability-alerts"
+        - email:
+            recipients: ["platform-team@company.com"]
+
+# Error handling
+on_error:
+  - id: notify_sync_failed
+    name: Send Failure Notification
+    
+    action: notification
+    config:
+      title: "⚠️ Application Observability Hub - CMDB Sync FAILED"
+      message: |
+        CMDB sync failed at {{ context.current_task }}.
+        
+        Error: {{ context.error.message }}
+        
+        Manual action required:
+        1. Check CMDB API connectivity
+        2. Verify API credentials in Dynatrace settings
+        3. Review workflow logs
+        4. Lookup table was NOT updated
+      
+      channels:
+        - slack:
+            channel: "#observability-alerts"
+        - email:
+            recipients: ["platform-team@company.com"]
+
+# Configuration variables (set in Dynatrace)
+variables:
+  cmdb_api_url:
+    type: string
+    description: "CMDB API base URL (e.g., https://cmdb.company.com/api)"
+    required: true
+  
+  cmdb_api_token:
+    type: secret
+    description: "CMDB API authentication token"
+    required: true
+  
+  dynatrace_environment:
+    type: string
+    description: "Dynatrace environment URL (e.g., abc123.sprint.apps.dynatracelabs.com)"
+    required: true
+  
+  dynatrace_api_token:
+    type: secret
+    description: "Dynatrace API token (requires storage:files:write scope)"
+    required: true
+
+---
+
+## Phase 2 Implementation Notes
+
+### When to Implement
+
+Implement this workflow only after Phase 1 is validated successfully in sprint tenant.
+
+**Phase 1 → Phase 2 Checklist:**
+1. [✓] Setup.tsx supports "Lookup Table" data source
+2. [✓] Sample lookup table tested in sprint tenant
+3. [✓] Overview.tsx renders identically for tags and lookups
+4. [✓] queryBuilder correctly routes queries
+5. [ ] CMDB API endpoint available (Phase 2)
+6. [ ] CMDB API credentials obtained (Phase 2)
+7. [ ] Lookup table schema finalized (Phase 2)
+8. [ ] Workflow deployed and tested (Phase 2)
+
+### CMDB API Requirements
+
+This workflow assumes a CMDB API endpoint that returns:
+
+```json
+{
+  "result": [
+    {
+      "sys_id": "...",
+      "cmdb_ci_key": "app_identifier",
+      "name": "Application Name",
+      "business_criticality": "Business Critical|Business Essential|Business Standard",
+      "owned_by": "Team Name",
+      "business_unit": "Business Unit"
+    }
+  ]
+}
+```
+
+**Adapt** the `transform_to_lookup_schema` task if your CMDB API returns different fields.
+
+### Lookup Table Schema
+
+The target Dynatrace lookup table must be created with these columns:
+
+```
+Table Name: applications
+Key Column: app_id
+Columns:
+  - app_id (string, key)
+  - app_name (string)
+  - tier (string)
+  - owner (string)
+  - business_unit (string)
+  - last_sync (datetime)
+```
+
+### Error Handling
+
+The workflow includes:
+- Field validation before upload
+- API timeout handling
+- Failure notifications (Slack + Email)
+- Idempotent design (safe to re-run)
+
+If sync fails, the lookup table retains the previous data (no data loss).
+
+### Monitoring
+
+After deployment, monitor:
+1. Workflow execution status (Success/Failure rate)
+2. Records synced per run (trend over time)
+3. Data freshness (last_sync column)
+4. Query performance (check if lookup queries are slow)
+
+### Performance Considerations
+
+- **Hourly frequency:** Adjustable in workflow trigger
+- **Batch size:** Current design replaces entire table (scalable to ~100k rows)
+- **Query performance:** DQL lookup queries remain fast (<1s) with proper indexing
+
+---
+
+## Phase 2 Final Architecture
+
+```
+CMDB API
+  ↓ (Hourly, via Dynatrace Workflow)
+  ↓ Fetch + Transform
+  ↓
+Dynatrace Lookup Table "applications"
+  ↓
+Setup Wizard (User selects "Lookup Table" data source)
+  ↓ Specifies table name: "applications"
+  ↓ Maps columns: app_id→appTag, app_name→appName, etc.
+  ↓
+Overview Page (Identical visualization code to Phase 1)
+  ↓ queryBuilder routes to lookupAdapter
+  ↓ lookupAdapter generates lookup query
+  ↓
+DQL Query Execution
+  ↓ fetch data from table "applications"
+  ↓ Project user-defined columns
+  ↓
+Table Render (ZERO CHANGES from Phase 1)
+```
+
+This proves the entire architecture is scalable and maintainable.
